@@ -1,48 +1,96 @@
+import logging
 from pyrogram import Client, filters
-import sqlite3
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.errors import UserNotParticipant
+from config import API_ID, API_HASH, BOT_TOKEN
+import asyncio
 
-# Bot Configuration
-API_ID = "your_api_id"  # Get from my.telegram.org
-API_HASH = "your_api_hash"  # Get from my.telegram.org
-BOT_TOKEN = "your_bot_token"  # Get from BotFather
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Initialize Bot
-app = Client("SangMataClone", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+# Create the bot
+app = Client("SangMetaBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# Initialize Database
-conn = sqlite3.connect("user_changes.db")
-cursor = conn.cursor()
-cursor.execute("CREATE TABLE IF NOT EXISTS user_changes (user_id INTEGER, username TEXT, name TEXT, date TEXT)")
+# User data store (for simplicity, using a dictionary)
+user_data = {}
 
-# Track User Changes
-@app.on_message(filters.group & filters.new_chat_members)
-async def track_new_members(client, message):
-    for member in message.new_chat_members:
-        user_id = member.id
-        username = member.username or "No Username"
-        name = member.first_name
-        cursor.execute("INSERT INTO user_changes VALUES (?, ?, ?, datetime('now'))", (user_id, username, name))
-        conn.commit()
-        await message.reply(f"Tracking {name} (@{username}) for changes!")
+# Command: /start
+@app.on_message(filters.command("start"))
+async def start(client: Client, message: Message):
+    await message.reply("Hello! I track Telegram user history. Send any message and I'll track you.")
 
-@app.on_message(filters.group & filters.command("history"))
-async def get_user_history(client, message):
-    if not message.reply_to_message:
-        await message.reply("Reply to a user's message to get their history!")
+# Track all messages and save user history
+@app.on_message(filters.text & ~filters.command("start"))
+async def track_user(client: Client, message: Message):
+    user_id = message.from_user.id
+    username = message.from_user.username or "No Username"
+    
+    # If user is not in the dictionary, initialize their data
+    if user_id not in user_data:
+        user_data[user_id] = {
+            "messages": 0,
+            "username": username,
+            "name": message.from_user.first_name,
+            "chat_ids": set()
+        }
+    
+    # Update message count and store chat info
+    user_data[user_id]["messages"] += 1
+    user_data[user_id]["chat_ids"].add(message.chat.id)
+
+    # Logging user message history
+    logger.info(f"User: {user_data[user_id]['name']} (ID: {user_id}), Messages: {user_data[user_id]['messages']}")
+
+# Command: /history <user_id>
+@app.on_message(filters.command("history"))
+async def get_user_history(client: Client, message: Message):
+    if len(message.command) != 2:
+        await message.reply("Usage: /history <user_id>")
         return
 
-    user_id = message.reply_to_message.from_user.id
-    cursor.execute("SELECT * FROM user_changes WHERE user_id = ?", (user_id,))
-    records = cursor.fetchall()
+    try:
+        user_id = int(message.command[1])
+        if user_id in user_data:
+            user_info = user_data[user_id]
+            history = (
+                f"User: {user_info['name']} ({user_info['username']})\n"
+                f"Messages Sent: {user_info['messages']}\n"
+                f"Chats Participated: {len(user_info['chat_ids'])}\n"
+            )
+            await message.reply(history)
+        else:
+            await message.reply("No history found for this user.")
+    except ValueError:
+        await message.reply("Invalid user ID.")
 
-    if not records:
-        await message.reply("No history found for this user.")
-        return
+# Command: /join_channel
+@app.on_message(filters.command("join_channel"))
+async def join_channel(client: Client, message: Message):
+    channel_link = "https://t.me/your_channel"  # Replace with your channel link
+    try:
+        await message.reply(
+            text=f"Join our channel to track more user history!\n{channel_link}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("Join Channel", url=channel_link)]
+            ])
+        )
+    except Exception as e:
+        logger.error(f"Error sending join message: {e}")
+        await message.reply("Could not send the join message, please try again later.")
 
-    history = "\n".join(
-        [f"Name: {rec[2]}, Username: @{rec[1]} (Logged: {rec[3]})" for rec in records]
-    )
-    await message.reply(f"Change History for {message.reply_to_message.from_user.first_name}:\n\n{history}")
+# Function to track new users joining the bot
+@app.on_message(filters.new_chat_members)
+async def new_user(client: Client, message: Message):
+    for new_user in message.new_chat_members:
+        user_data[new_user.id] = {
+            "messages": 0,
+            "username": new_user.username or "No Username",
+            "name": new_user.first_name,
+            "chat_ids": {message.chat.id}
+        }
+        await message.reply(f"Welcome {new_user.first_name}! I will track your messages here.")
 
-# Start Bot
-app.run()
+# Run the bot
+if __name__ == "__main__":
+    app.run()
