@@ -1,18 +1,16 @@
 import logging
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
-from pyrogram.errors import UserNotParticipant
-from config import API_ID, API_HASH, BOT_TOKEN
-import asyncio
+from config import API_ID, API_HASH, BOT_TOKEN  # Import from config
 
-# Setup logging
+# Set up logging to debug
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Create the bot
+# Create the bot using the values loaded from config.py
 app = Client("SangMetaBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# User data store (for simplicity, using a dictionary)
+# Track user history (In-memory dictionary or DB)
 user_data = {}
 
 # Command: /start
