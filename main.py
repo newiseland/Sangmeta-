@@ -5,8 +5,8 @@ import os
 import sqlite3
 
 # Configuration: Replace these values with your own
-API_ID = int(os.getenv("API_ID", "8048988286")  # Replace YOUR_API_ID with your Telegram API ID
-API_HASH = os.getenv("API_HASH", "b35b715fe8dc0a58e8048988286fc5b6")  # Replace YOUR_API_HASH with your Telegram API Hash
+API_ID = int(os.getenv("API_ID", "24912072")  # Replace YOUR_API_ID with your Telegram API ID
+API_HASH = os.getenv("API_HASH", "1a9c568007ef51bed8fd2357947e5cb3")  # Replace YOUR_API_HASH with your Telegram API Hash
 BOT_TOKEN = os.getenv("BOT_TOKEN", "7727337046:AAFURd1egV8eNUuVF9s39Bn7OI7ox5ykPBg")  # Replace YOUR_BOT_TOKEN with your Bot Token
 
 # Initialize the bot
