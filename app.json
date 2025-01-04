@@ -1,0 +1,25 @@
+{
+  "name": "SangMata-BOT",
+  "description": "A Telegram bot to track username and profile changes in groups.",
+  "repository": "https://github.com/newiseland/Sangmeta-",
+  "stack": "heroku-20",
+  "env": {
+    "API_ID": {
+      "description": "Your Telegram API ID (get from my.telegram.org)",
+      "required": true
+    },
+    "API_HASH": {
+      "description": "Your Telegram API Hash (get from my.telegram.org)",
+      "required": true
+    },
+    "BOT_TOKEN": {
+      "description": "Bot token from BotFather on Telegram",
+      "required": true
+    },
+    "DATABASE_URL": {
+      "description": "Database URL (use 'sqlite:///user_changes.db' for local development)",
+      "required": true,
+      "value": "sqlite:///user_changes.db"
+    }
+  }
+}
