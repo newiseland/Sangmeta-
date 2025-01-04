@@ -1,113 +1,132 @@
 from pyrogram import Client, filters
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
-from datetime import datetime
-import os
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
 import sqlite3
+import os
+from datetime import datetime
 
-# Configuration: Replace these values with your own
-API_ID = int(os.getenv("API_ID", "24912072"))  # Replace YOUR_API_ID with your Telegram API ID
-API_HASH = os.getenv("API_HASH", "1a9c568007ef51bed8fd2357947e5cb3")  # Replace YOUR_API_HASH with your Telegram API Hash
-BOT_TOKEN = os.getenv("BOT_TOKEN", "7727337046:AAFURd1egV8eNUuVF9s39Bn7OI7ox5ykPBg")  # Replace YOUR_BOT_TOKEN with your Bot Token
+# Configuration
+API_ID = int(os.getenv("API_ID", "24912072"))  # Replace YOUR_API_ID
+API_HASH = os.getenv("API_HASH", "1a9c568007ef51bed8fd2357947e5cb3")  # Replace YOUR_API_HASH
+BOT_TOKEN = os.getenv("BOT_TOKEN", "7727337046:AAFURd1egV8eNUuVF9s39Bn7OI7ox5ykPBg")  # Replace YOUR_BOT_TOKEN
 
-# Initialize the bot
-app = Client("SangMetaBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+# Initialize bot
+app = Client("sangmata_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 # Database setup
 if not os.path.exists("history.db"):
     conn = sqlite3.connect("history.db")
     cursor = conn.cursor()
     cursor.execute("""
-        CREATE TABLE users (
-            user_id INTEGER PRIMARY KEY,
-            first_name TEXT,
-            username TEXT,
-            last_seen TIMESTAMP
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE username_changes (
+        CREATE TABLE IF NOT EXISTS user_history (
             user_id INTEGER,
-            old_username TEXT,
-            new_username TEXT,
-            change_time TIMESTAMP,
-            FOREIGN KEY(user_id) REFERENCES users(user_id)
+            name TEXT,
+            username TEXT,
+            change_time TIMESTAMP
         )
     """)
     conn.commit()
     conn.close()
 
-# Function to log changes in the database
-def log_change(user_id, old_username, new_username):
-    conn = sqlite3.connect("history.db")
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO username_changes (user_id, old_username, new_username, change_time)
-        VALUES (?, ?, ?, ?)
-    """, (user_id, old_username, new_username, datetime.now()))
-    conn.commit()
-    conn.close()
-
-# Middleware to track changes
-@app.on_message(filters.private & ~filters.service)
+# Middleware: Track user data changes
+@app.on_message(filters.private | filters.group)
 async def track_user_changes(client: Client, message: Message):
     user = message.from_user
+    if not user:
+        return
+
     user_id = user.id
-    first_name = user.first_name
-    username = user.username
+    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    username = user.username or "None"
 
     conn = sqlite3.connect("history.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT username FROM users WHERE user_id = ?", (user_id,))
-    data = cursor.fetchone()
 
-    if data:
-        # Check for username changes
-        old_username = data[0]
-        if old_username != username:
-            log_change(user_id, old_username, username)
-            cursor.execute("UPDATE users SET username = ? WHERE user_id = ?", (username, user_id))
+    cursor.execute("SELECT name, username FROM user_history WHERE user_id = ? ORDER BY change_time DESC LIMIT 1", (user_id,))
+    result = cursor.fetchone()
+
+    if result:
+        last_name, last_username = result
+        if full_name != last_name or username != last_username:
+            cursor.execute("""
+                INSERT INTO user_history (user_id, name, username, change_time)
+                VALUES (?, ?, ?, ?)
+            """, (user_id, full_name, username, datetime.now()))
     else:
         # New user
-        cursor.execute("INSERT INTO users (user_id, first_name, username, last_seen) VALUES (?, ?, ?, ?)",
-                       (user_id, first_name, username, datetime.now()))
+        cursor.execute("""
+            INSERT INTO user_history (user_id, name, username, change_time)
+            VALUES (?, ?, ?, ?)
+        """, (user_id, full_name, username, datetime.now()))
 
     conn.commit()
     conn.close()
 
-# Command to display username history
-@app.on_message(filters.command("history") & filters.private)
-async def show_history(client: Client, message: Message):
+# /start command
+@app.on_message(filters.command("start"))
+async def start_command(client: Client, message: Message):
+    await message.reply_text(
+        "👋 Welcome to the SangMata Bot!\n\n"
+        "This bot tracks username and name changes of Telegram users. Use `/history` to view your history, or `/find <user_id>` to find history of other users.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("Source Code", url="https://github.com/YourRepo")]
+        ])
+    )
+
+# /history command: View personal history
+@app.on_message(filters.command("history"))
+async def view_history(client: Client, message: Message):
     user_id = message.from_user.id
 
     conn = sqlite3.connect("history.db")
     cursor = conn.cursor()
+
     cursor.execute("""
-        SELECT old_username, new_username, change_time FROM username_changes
-        WHERE user_id = ? ORDER BY change_time DESC
+        SELECT name, username, change_time
+        FROM user_history
+        WHERE user_id = ?
+        ORDER BY change_time DESC
     """, (user_id,))
-    changes = cursor.fetchall()
+    records = cursor.fetchall()
     conn.close()
 
-    if changes:
-        history_text = "📜 **Username History:**\n\n"
-        for old_username, new_username, change_time in changes:
-            history_text += f"• `{old_username or 'None'}` → `{new_username or 'None'}` at {change_time}\n"
-        await message.reply_text(history_text)
+    if records:
+        history = f"📜 **History of Changes for {message.from_user.first_name}:**\n\n"
+        for name, username, time in records:
+            history += f"• Name: `{name}`\n  Username: `{username}`\n  Time: {time}\n\n"
+        await message.reply_text(history)
     else:
-        await message.reply_text("No username changes found for your account.")
+        await message.reply_text("No history found for your account.")
 
-# Start command
-@app.on_message(filters.command("start") & filters.private)
-async def start(client: Client, message: Message):
-    await message.reply_text(
-        text="👋 Welcome to SangMata Bot!\n\n"
-             "This bot tracks your username changes and displays them using the /history command.",
-        reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("Developer", url="https://t.me/YourUsername")]]
-        )
-    )
+# /find command: View history of other users
+@app.on_message(filters.command("find"))
+async def find_user_history(client: Client, message: Message):
+    if len(message.command) < 2:
+        await message.reply_text("❌ Please provide a user ID. Usage: `/find <user_id>`")
+        return
+
+    user_id = int(message.command[1])
+
+    conn = sqlite3.connect("history.db")
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT name, username, change_time
+        FROM user_history
+        WHERE user_id = ?
+        ORDER BY change_time DESC
+    """, (user_id,))
+    records = cursor.fetchall()
+    conn.close()
+
+    if records:
+        history = f"📜 **History of Changes for User {user_id}:**\n\n"
+        for name, username, time in records:
+            history += f"• Name: `{name}`\n  Username: `{username}`\n  Time: {time}\n\n"
+        await message.reply_text(history)
+    else:
+        await message.reply_text(f"No history found for user ID `{user_id}`.")
 
 # Run the bot
 if __name__ == "__main__":
-    print("Bot is starting...")
+    print("Bot is running...")
     app.run()
