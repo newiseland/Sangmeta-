@@ -9,6 +9,10 @@ logger = logging.getLogger(__name__)
 
 # Create the bot using the values loaded from config.py
 app = Client("SangMetaBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+# Bot Configuration
+API_ID = "8048988286"  # Get from my.telegram.org
+API_HASH = "b35b715fe8dc0a58e8048988286fc5b6"  # Get from my.telegram.org
+BOT_TOKEN = "7727337046:AAFURd1egV8eNUuVF9s39Bn7OI7ox5ykPBg"  # Get from BotFather
 
 # Track user history (In-memory dictionary or DB)
 user_data = {}
