@@ -1,98 +1,113 @@
-import logging
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
-from config import API_ID, API_HASH, BOT_TOKEN  # Import from config
+from datetime import datetime
+import os
+import sqlite3
 
-# Set up logging to debug
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Configuration: Replace these values with your own
+API_ID = int(os.getenv("API_ID", "8048988286")  # Replace YOUR_API_ID with your Telegram API ID
+API_HASH = os.getenv("API_HASH", "b35b715fe8dc0a58e8048988286fc5b6")  # Replace YOUR_API_HASH with your Telegram API Hash
+BOT_TOKEN = os.getenv("BOT_TOKEN", "7727337046:AAFURd1egV8eNUuVF9s39Bn7OI7ox5ykPBg")  # Replace YOUR_BOT_TOKEN with your Bot Token
 
-# Create the bot using the values loaded from config.py
+# Initialize the bot
 app = Client("SangMetaBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-# Bot Configuration
-API_ID = "8048988286"  # Get from my.telegram.org
-API_HASH = "b35b715fe8dc0a58e8048988286fc5b6"  # Get from my.telegram.org
-BOT_TOKEN = "7727337046:AAFURd1egV8eNUuVF9s39Bn7OI7ox5ykPBg"  # Get from BotFather
 
-# Track user history (In-memory dictionary or DB)
-user_data = {}
-
-# Command: /start
-@app.on_message(filters.command("start"))
-async def start(client: Client, message: Message):
-    await message.reply("Hello! I track Telegram user history. Send any message and I'll track you.")
-
-# Track all messages and save user history
-@app.on_message(filters.text & ~filters.command("start"))
-async def track_user(client: Client, message: Message):
-    user_id = message.from_user.id
-    username = message.from_user.username or "No Username"
-    
-    # If user is not in the dictionary, initialize their data
-    if user_id not in user_data:
-        user_data[user_id] = {
-            "messages": 0,
-            "username": username,
-            "name": message.from_user.first_name,
-            "chat_ids": set()
-        }
-    
-    # Update message count and store chat info
-    user_data[user_id]["messages"] += 1
-    user_data[user_id]["chat_ids"].add(message.chat.id)
-
-    # Logging user message history
-    logger.info(f"User: {user_data[user_id]['name']} (ID: {user_id}), Messages: {user_data[user_id]['messages']}")
-
-# Command: /history <user_id>
-@app.on_message(filters.command("history"))
-async def get_user_history(client: Client, message: Message):
-    if len(message.command) != 2:
-        await message.reply("Usage: /history <user_id>")
-        return
-
-    try:
-        user_id = int(message.command[1])
-        if user_id in user_data:
-            user_info = user_data[user_id]
-            history = (
-                f"User: {user_info['name']} ({user_info['username']})\n"
-                f"Messages Sent: {user_info['messages']}\n"
-                f"Chats Participated: {len(user_info['chat_ids'])}\n"
-            )
-            await message.reply(history)
-        else:
-            await message.reply("No history found for this user.")
-    except ValueError:
-        await message.reply("Invalid user ID.")
-
-# Command: /join_channel
-@app.on_message(filters.command("join_channel"))
-async def join_channel(client: Client, message: Message):
-    channel_link = "https://t.me/your_channel"  # Replace with your channel link
-    try:
-        await message.reply(
-            text=f"Join our channel to track more user history!\n{channel_link}",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("Join Channel", url=channel_link)]
-            ])
+# Database setup
+if not os.path.exists("history.db"):
+    conn = sqlite3.connect("history.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE users (
+            user_id INTEGER PRIMARY KEY,
+            first_name TEXT,
+            username TEXT,
+            last_seen TIMESTAMP
         )
-    except Exception as e:
-        logger.error(f"Error sending join message: {e}")
-        await message.reply("Could not send the join message, please try again later.")
+    """)
+    cursor.execute("""
+        CREATE TABLE username_changes (
+            user_id INTEGER,
+            old_username TEXT,
+            new_username TEXT,
+            change_time TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(user_id)
+        )
+    """)
+    conn.commit()
+    conn.close()
 
-# Function to track new users joining the bot
-@app.on_message(filters.new_chat_members)
-async def new_user(client: Client, message: Message):
-    for new_user in message.new_chat_members:
-        user_data[new_user.id] = {
-            "messages": 0,
-            "username": new_user.username or "No Username",
-            "name": new_user.first_name,
-            "chat_ids": {message.chat.id}
-        }
-        await message.reply(f"Welcome {new_user.first_name}! I will track your messages here.")
+# Function to log changes in the database
+def log_change(user_id, old_username, new_username):
+    conn = sqlite3.connect("history.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO username_changes (user_id, old_username, new_username, change_time)
+        VALUES (?, ?, ?, ?)
+    """, (user_id, old_username, new_username, datetime.now()))
+    conn.commit()
+    conn.close()
+
+# Middleware to track changes
+@app.on_message(filters.private & ~filters.service)
+async def track_user_changes(client: Client, message: Message):
+    user = message.from_user
+    user_id = user.id
+    first_name = user.first_name
+    username = user.username
+
+    conn = sqlite3.connect("history.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT username FROM users WHERE user_id = ?", (user_id,))
+    data = cursor.fetchone()
+
+    if data:
+        # Check for username changes
+        old_username = data[0]
+        if old_username != username:
+            log_change(user_id, old_username, username)
+            cursor.execute("UPDATE users SET username = ? WHERE user_id = ?", (username, user_id))
+    else:
+        # New user
+        cursor.execute("INSERT INTO users (user_id, first_name, username, last_seen) VALUES (?, ?, ?, ?)",
+                       (user_id, first_name, username, datetime.now()))
+
+    conn.commit()
+    conn.close()
+
+# Command to display username history
+@app.on_message(filters.command("history") & filters.private)
+async def show_history(client: Client, message: Message):
+    user_id = message.from_user.id
+
+    conn = sqlite3.connect("history.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT old_username, new_username, change_time FROM username_changes
+        WHERE user_id = ? ORDER BY change_time DESC
+    """, (user_id,))
+    changes = cursor.fetchall()
+    conn.close()
+
+    if changes:
+        history_text = "📜 **Username History:**\n\n"
+        for old_username, new_username, change_time in changes:
+            history_text += f"• `{old_username or 'None'}` → `{new_username or 'None'}` at {change_time}\n"
+        await message.reply_text(history_text)
+    else:
+        await message.reply_text("No username changes found for your account.")
+
+# Start command
+@app.on_message(filters.command("start") & filters.private)
+async def start(client: Client, message: Message):
+    await message.reply_text(
+        text="👋 Welcome to SangMata Bot!\n\n"
+             "This bot tracks your username changes and displays them using the /history command.",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("Developer", url="https://t.me/YourUsername")]]
+        )
+    )
 
 # Run the bot
 if __name__ == "__main__":
+    print("Bot is starting...")
     app.run()
